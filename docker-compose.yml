@@ -1,4 +1,4 @@
-services:
+﻿services:
 
   postgres:
     image: postgres:16
@@ -26,6 +26,8 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./models:/opt/airflow/models
       - ./logs:/opt/airflow/logs
     command: airflow webserver
 
@@ -42,6 +44,8 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./models:/opt/airflow/models
       - ./logs:/opt/airflow/logs
     command: airflow scheduler
 
