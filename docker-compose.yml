@@ -3,51 +3,80 @@
   postgres:
     image: postgres:16
     container_name: weather_postgres
+    restart: unless-stopped
+
     environment:
       POSTGRES_USER: weather_user
       POSTGRES_PASSWORD: weather_password
       POSTGRES_DB: weather_db
+
     ports:
       - "5432:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
 
   airflow:
     image: apache/airflow:2.9.2
     container_name: weather_airflow
+    restart: unless-stopped
+
     depends_on:
       - postgres
+
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://weather_user:weather_password@postgres:5432/weather_db
+
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+      DB_HOST: weather_postgres
+
+      _PIP_ADDITIONAL_REQUIREMENTS: "joblib==1.6.0 scikit-learn==1.9.1 xgboost==3.4.1 pandas==2.1.4 requests==2.31.0 psycopg2-binary==2.9.9"
+
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./models:/opt/airflow/models
+      - ./logs:/opt/airflow/logs
+
     ports:
       - "8080:8080"
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./data:/opt/airflow/data
-      - ./models:/opt/airflow/models
-      - ./logs:/opt/airflow/logs
-    command: airflow webserver
 
-  airflow-scheduler:
+    command: webserver
+
+
+  airflow_scheduler:
     image: apache/airflow:2.9.2
     container_name: weather_airflow_scheduler
+    restart: unless-stopped
+
     depends_on:
       - postgres
-      - airflow
+
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://weather_user:weather_password@postgres:5432/weather_db
+
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+      DB_HOST: weather_postgres
+
+      _PIP_ADDITIONAL_REQUIREMENTS: "joblib==1.6.0 scikit-learn==1.9.1 xgboost==3.4.1 pandas==2.1.4 requests==2.31.0 psycopg2-binary==2.9.9"
+
     volumes:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data
       - ./models:/opt/airflow/models
       - ./logs:/opt/airflow/logs
-    command: airflow scheduler
+
+    command: scheduler
+
 
 volumes:
   postgres_data:

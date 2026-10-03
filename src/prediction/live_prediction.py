@@ -1,12 +1,17 @@
 import requests
 import pandas as pd
 import joblib
+import psycopg2
 
 from pathlib import Path
 from datetime import datetime
+import sys
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# =========================================================
+from src.database.save_live_prediction import save_prediction# =========================================================
 # CONFIGURATION
 # =========================================================
 
@@ -20,6 +25,19 @@ MODEL_DIR = Path("models")
 OUTPUT_DIR = Path("data/live")
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# =========================================================
+# POSTGRESQL CONFIGURATION
+# =========================================================
+
+import os
+
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = 5432
+DB_NAME = "weather_db"
+DB_USER = "weather_user"
+DB_PASSWORD = "weather_password"
 
 
 # =========================================================
@@ -130,6 +148,60 @@ def load_models():
     print("Models loaded successfully!")
 
     return rf_model, xgb_model
+
+
+# =========================================================
+# SAVE PREDICTION TO POSTGRESQL
+# =========================================================
+
+def save_prediction_to_database(
+    prediction_time,
+    rf_prediction,
+    rf_probability,
+    xgb_prediction,
+    xgb_probability
+):
+
+    print("\nSaving prediction to PostgreSQL...")
+
+    connection = psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+    cursor = connection.cursor()
+
+    insert_query = """
+    INSERT INTO live_predictions (
+        prediction_time,
+        rf_prediction,
+        rf_probability,
+        xgb_prediction,
+        xgb_probability
+    )
+    VALUES (%s, %s, %s, %s, %s);
+    """
+
+    cursor.execute(
+        insert_query,
+        (
+            prediction_time,
+            int(rf_prediction),
+            float(rf_probability),
+            int(xgb_prediction),
+            float(xgb_probability)
+        )
+    )
+
+    connection.commit()
+
+    cursor.close()
+    connection.close()
+
+    print("Prediction successfully saved to PostgreSQL!")
 
 
 # =========================================================
@@ -287,6 +359,19 @@ def make_prediction():
 
     print("\nPrediction saved to:")
     print(output_file)
+
+    print("\nLIVE PREDICTION COMPLETED!")
+    # =====================================================
+    # SAVE TO POSTGRESQL
+    # =====================================================
+
+    save_prediction_to_database(
+        prediction_time,
+        rf_prediction,
+        rf_probability,
+        xgb_prediction,
+        xgb_probability
+    )
 
     print("\nLIVE PREDICTION COMPLETED!")
 
