@@ -33,7 +33,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 import os
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_PORT = 5432
 DB_NAME = "weather_db"
 DB_USER = "weather_user"
@@ -48,27 +48,16 @@ FEATURES = [
     "temperature_2m",
     "relative_humidity_2m",
     "dew_point_2m",
-    "apparent_temperature",
     "precipitation",
     "weather_code",
     "pressure_msl",
-    "surface_pressure",
     "cloud_cover",
     "cloud_cover_low",
     "cloud_cover_mid",
-    "cloud_cover_high",
     "wind_speed_10m",
-    "wind_direction_10m",
     "wind_gusts_10m",
-    "et0_fao_evapotranspiration",
-    "vapour_pressure_deficit",
-    "sunshine_duration",
-    "soil_temperature_0_to_7cm",
-    "soil_temperature_7_to_28cm",
-    "soil_moisture_0_to_7cm",
-    "soil_moisture_7_to_28cm"
+    "vapour_pressure_deficit"
 ]
-
 
 # =========================================================
 # FETCH WEATHER DATA
@@ -182,7 +171,8 @@ def save_prediction_to_database(
         xgb_prediction,
         xgb_probability
     )
-    VALUES (%s, %s, %s, %s, %s);
+    VALUES (%s, %s, %s, %s, %s)
+    ON CONFLICT (prediction_time) DO NOTHING;
     """
 
     cursor.execute(
@@ -198,11 +188,13 @@ def save_prediction_to_database(
 
     connection.commit()
 
+    if cursor.rowcount == 1:
+        print("New prediction successfully saved to PostgreSQL!")
+    else:
+        print("Prediction already exists. Duplicate not inserted.")
+
     cursor.close()
     connection.close()
-
-    print("Prediction successfully saved to PostgreSQL!")
-
 
 # =========================================================
 # MAKE LIVE PREDICTION

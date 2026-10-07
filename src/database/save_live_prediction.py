@@ -44,6 +44,13 @@ def save_prediction(
 
     cursor.execute(create_table_query)
 
+    # Prevent duplicate predictions for the same prediction time
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS
+        unique_live_prediction_time
+        ON live_predictions (prediction_time);
+    """)
+
     insert_query = """
     INSERT INTO live_predictions (
         prediction_time,
@@ -52,7 +59,8 @@ def save_prediction(
         xgb_prediction,
         xgb_probability
     )
-    VALUES (%s, %s, %s, %s, %s);
+    VALUES (%s, %s, %s, %s, %s)
+    ON CONFLICT (prediction_time) DO NOTHING;
     """
 
     cursor.execute(
@@ -66,9 +74,12 @@ def save_prediction(
         )
     )
 
-    connection.commit()
+    if cursor.rowcount == 1:
+        print("New prediction saved to PostgreSQL!")
+    else:
+        print("Prediction already exists. Duplicate not inserted.")
 
-    print("Prediction saved to PostgreSQL!")
+    connection.commit()
 
     cursor.close()
     connection.close()
