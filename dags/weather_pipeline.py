@@ -9,10 +9,7 @@ from airflow.operators.python import PythonOperator
 
 def run_script(script_name, error_message):
     result = subprocess.run(
-        [
-            sys.executable,
-            f"/opt/airflow/src/prediction/{script_name}",
-        ],
+        [sys.executable, f"/opt/airflow/src/prediction/{script_name}"],
         capture_output=True,
         text=True,
     )
@@ -52,6 +49,13 @@ def evaluate_live_rain_predictions():
     )
 
 
+def run_live_weather_classifier():
+    run_script(
+        "live_weather_classifier.py",
+        "Live general weather classification failed",
+    )
+
+
 default_args = {
     "owner": "weather-ml-project",
     "depends_on_past": False,
@@ -64,8 +68,8 @@ with DAG(
     dag_id="weather_live_prediction",
     default_args=default_args,
     description=(
-        "Live Bengaluru weather regression, "
-        "rain classification and evaluation"
+        "Live Bengaluru weather regression, general weather "
+        "classification, rain classification and evaluation"
     ),
     start_date=datetime(2026, 9, 23),
     schedule="*/15 * * * *",
@@ -93,5 +97,11 @@ with DAG(
         python_callable=evaluate_live_rain_predictions,
     )
 
+    general_weather = PythonOperator(
+        task_id="run_live_general_weather_classification",
+        python_callable=run_live_weather_classifier,
+    )
+
     live_regression >> regression_evaluation
     regression_evaluation >> live_rain >> rain_evaluation
+    rain_evaluation >> general_weather

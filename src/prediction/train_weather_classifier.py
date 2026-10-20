@@ -1,4 +1,4 @@
-
+﻿
 from pathlib import Path
 
 import joblib
@@ -37,8 +37,12 @@ FEATURES = [
     "temperature_2m",
     "relative_humidity_2m",
     "dew_point_2m",
+    "precipitation",
+    "weather_code",
     "pressure_msl",
     "cloud_cover",
+    "cloud_cover_low",
+    "cloud_cover_mid",
     "wind_speed_10m",
     "wind_gusts_10m",
     "vapour_pressure_deficit",
@@ -458,3 +462,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

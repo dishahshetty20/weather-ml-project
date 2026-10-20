@@ -1,3 +1,4 @@
+
 FROM apache/airflow:2.9.2
 
 USER airflow
@@ -12,6 +13,7 @@ RUN python -m pip install --no-cache-dir --default-timeout=300 --retries 10 \
     threadpoolctl \
     narwhals \
     requests==2.31.0 \
-    psycopg2-binary==2.9.9
+    psycopg2-binary==2.9.9 \
+    matplotlib
 
 RUN python -m pip install --no-cache-dir --default-timeout=300 --retries 10 --no-deps xgboost==3.4.1
