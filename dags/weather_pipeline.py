@@ -1,4 +1,3 @@
-
 from datetime import datetime, timedelta
 import subprocess
 import sys
@@ -35,20 +34,6 @@ def evaluate_live_regression():
     )
 
 
-def run_live_rain_prediction():
-    run_script(
-        "live_prediction.py",
-        "Live rain classification failed",
-    )
-
-
-def evaluate_live_rain_predictions():
-    run_script(
-        "evaluate_live_predictions.py",
-        "Live rain evaluation failed",
-    )
-
-
 def run_live_weather_classifier():
     run_script(
         "live_weather_classifier.py",
@@ -68,8 +53,8 @@ with DAG(
     dag_id="weather_live_prediction",
     default_args=default_args,
     description=(
-        "Live Bengaluru weather regression, general weather "
-        "classification, rain classification and evaluation"
+        "Live Bengaluru weather regression, evaluation "
+        "and general weather classification"
     ),
     start_date=datetime(2026, 9, 23),
     schedule="*/15 * * * *",
@@ -87,21 +72,10 @@ with DAG(
         python_callable=evaluate_live_regression,
     )
 
-    live_rain = PythonOperator(
-        task_id="run_live_rain_prediction",
-        python_callable=run_live_rain_prediction,
-    )
-
-    rain_evaluation = PythonOperator(
-        task_id="evaluate_live_rain_predictions",
-        python_callable=evaluate_live_rain_predictions,
-    )
-
     general_weather = PythonOperator(
         task_id="run_live_general_weather_classification",
         python_callable=run_live_weather_classifier,
     )
 
     live_regression >> regression_evaluation
-    regression_evaluation >> live_rain >> rain_evaluation
-    rain_evaluation >> general_weather
+    regression_evaluation >> general_weather
