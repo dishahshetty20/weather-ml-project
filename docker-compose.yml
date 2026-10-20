@@ -1,22 +1,12 @@
-version: "3.8"
-
-x-airflow-common:
-  &airflow-common
-  image: apache/airflow:2.9.2
+﻿x-airflow-common: &airflow-common
+  build: .
+  image: weather-ml-airflow:2.9.2
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://weather_user:weather_password@postgres:5432/weather_db
     AIRFLOW__CORE__FERNET_KEY: ""
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-
-    _PIP_ADDITIONAL_REQUIREMENTS: >-
-      joblib==1.6.0
-      scikit-learn==1.8.0
-      xgboost==3.4.1
-      pandas==2.1.4
-      requests==2.31.0
-      psycopg2-binary==2.9.9
 
   volumes:
     - ./dags:/opt/airflow/dags
@@ -30,7 +20,6 @@ x-airflow-common:
     - postgres
 
 services:
-
   postgres:
     image: postgres:16
     container_name: weather_postgres

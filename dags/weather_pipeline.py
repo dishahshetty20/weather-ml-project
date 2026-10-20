@@ -1,70 +1,56 @@
+
 from datetime import datetime, timedelta
+import subprocess
+import sys
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 
-# ============================================================
-# LIVE PREDICTION
-# ============================================================
-
-def run_live_prediction():
-
-    import subprocess
-    import sys
-
+def run_script(script_name, error_message):
     result = subprocess.run(
         [
             sys.executable,
-            "/opt/airflow/src/prediction/live_prediction.py"
+            f"/opt/airflow/src/prediction/{script_name}",
         ],
         capture_output=True,
-        text=True
+        text=True,
     )
 
     print(result.stdout)
 
     if result.returncode != 0:
-
         print(result.stderr)
-
-        raise RuntimeError(
-            "Live prediction failed"
-        )
+        raise RuntimeError(error_message)
 
 
-# ============================================================
-# LIVE PREDICTION EVALUATION
-# ============================================================
-
-def evaluate_live_predictions():
-
-    import subprocess
-    import sys
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "/opt/airflow/src/prediction/evaluate_live_predictions.py"
-        ],
-        capture_output=True,
-        text=True
+def run_live_regression_prediction():
+    run_script(
+        "live_regression_prediction.py",
+        "Live regression prediction failed",
     )
 
-    print(result.stdout)
 
-    if result.returncode != 0:
-
-        print(result.stderr)
-
-        raise RuntimeError(
-            "Live prediction evaluation failed"
-        )
+def evaluate_live_regression():
+    run_script(
+        "evaluate_live_regression.py",
+        "Live regression evaluation failed",
+    )
 
 
-# ============================================================
-# AIRFLOW DEFAULT ARGUMENTS
-# ============================================================
+def run_live_rain_prediction():
+    run_script(
+        "live_prediction.py",
+        "Live rain classification failed",
+    )
+
+
+def evaluate_live_rain_predictions():
+    run_script(
+        "evaluate_live_predictions.py",
+        "Live rain evaluation failed",
+    )
+
 
 default_args = {
     "owner": "weather-ml-project",
@@ -74,33 +60,38 @@ default_args = {
 }
 
 
-# ============================================================
-# DAG
-# ============================================================
-
 with DAG(
     dag_id="weather_live_prediction",
     default_args=default_args,
-    description="Run live Bengaluru weather prediction and evaluation",
+    description=(
+        "Live Bengaluru weather regression, "
+        "rain classification and evaluation"
+    ),
     start_date=datetime(2026, 9, 23),
     schedule="*/15 * * * *",
     catchup=False,
-    tags=[
-        "weather",
-        "ml",
-        "prediction",
-        "evaluation"
-    ],
+    tags=["weather", "ml", "regression", "classification"],
 ) as dag:
 
-    live_prediction = PythonOperator(
-        task_id="run_live_prediction",
-        python_callable=run_live_prediction,
+    live_regression = PythonOperator(
+        task_id="run_live_weather_prediction",
+        python_callable=run_live_regression_prediction,
     )
 
-    live_evaluation = PythonOperator(
-        task_id="evaluate_live_predictions",
-        python_callable=evaluate_live_predictions,
+    regression_evaluation = PythonOperator(
+        task_id="evaluate_live_weather",
+        python_callable=evaluate_live_regression,
     )
 
-    live_prediction >> live_evaluation
+    live_rain = PythonOperator(
+        task_id="run_live_rain_prediction",
+        python_callable=run_live_rain_prediction,
+    )
+
+    rain_evaluation = PythonOperator(
+        task_id="evaluate_live_rain_predictions",
+        python_callable=evaluate_live_rain_predictions,
+    )
+
+    live_regression >> regression_evaluation
+    regression_evaluation >> live_rain >> rain_evaluation

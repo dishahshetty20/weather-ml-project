@@ -3,7 +3,8 @@ import os
 import requests
 import psycopg2
 
-
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 # ============================================================
 # DATABASE CONFIGURATION
 # ============================================================
@@ -70,14 +71,10 @@ ORDER BY lp.prediction_time, lp.id;
 # ============================================================
 
 def fetch_actual_weather(prediction_time):
-
-    actual_time = prediction_time + \
-        __import__("datetime").timedelta(hours=1)
-
+    actual_time = prediction_time + timedelta(hours=1)
     date_string = actual_time.strftime("%Y-%m-%d")
 
-    url = "https://api.open-meteo.com/v1/forecast"
-
+    url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
         "latitude": LATITUDE,
         "longitude": LONGITUDE,

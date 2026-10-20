@@ -32,3 +32,11 @@ models/*.pkl
 # OS files
 .DS_Store
 Thumbs.db
+
+# Temporary and backup files
+*.bak
+*.tmp
+
+# Oversized model files - do not push directly to GitHub
+/models/random_forest_rain_model.pkl
+/models/weather_classifier/random_forest.joblib

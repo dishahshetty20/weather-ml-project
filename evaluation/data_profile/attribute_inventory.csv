@@ -1,0 +1,26 @@
+Attribute,Data Type,Missing Values,Unique Values
+time,datetime64[us],0,43824
+temperature_2m,float64,0,269
+relative_humidity_2m,int64,0,91
+dew_point_2m,float64,0,263
+apparent_temperature,float64,0,292
+precipitation,float64,0,102
+rain,float64,0,102
+snowfall,float64,0,1
+weather_code,int64,0,10
+pressure_msl,float64,0,203
+surface_pressure,float64,0,172
+cloud_cover,int64,0,101
+cloud_cover_low,int64,0,101
+cloud_cover_mid,int64,0,101
+cloud_cover_high,int64,0,101
+wind_speed_10m,float64,0,351
+wind_direction_10m,int64,0,361
+wind_gusts_10m,float64,0,195
+et0_fao_evapotranspiration,float64,0,97
+vapour_pressure_deficit,float64,0,559
+sunshine_duration,float64,0,3745
+soil_temperature_0_to_7cm,float64,0,282
+soil_temperature_7_to_28cm,float64,0,166
+soil_moisture_0_to_7cm,float64,0,393
+soil_moisture_7_to_28cm,float64,0,274
