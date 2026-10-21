@@ -1,0 +1,2 @@
+model,features,accuracy,precision_harsh,recall_harsh,f1_harsh,test_rows
+XGBoost Balanced,"wind_speed_10m, pressure_msl, relative_humidity_2m",0.7209355390758699,0.4017720745493431,0.7293399889073766,0.5181245074862096,8765

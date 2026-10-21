@@ -1,3 +1,4 @@
+
 from datetime import datetime, timedelta
 import subprocess
 import sys
@@ -6,9 +7,9 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 
-def run_script(script_name, error_message):
+def run_script(script_path, error_message):
     result = subprocess.run(
-        [sys.executable, f"/opt/airflow/src/prediction/{script_name}"],
+        [sys.executable, script_path],
         capture_output=True,
         text=True,
     )
@@ -20,23 +21,37 @@ def run_script(script_name, error_message):
         raise RuntimeError(error_message)
 
 
+def collect_live_weather():
+    run_script(
+        "/opt/airflow/src/ingestion/collect_live_weather.py",
+        "Live weather collection failed",
+    )
+
+
+def calculate_rolling_average():
+    run_script(
+        "/opt/airflow/src/prediction/live_weather_rolling_average.py",
+        "30-minute rolling average calculation failed",
+    )
+
+
 def run_live_regression_prediction():
     run_script(
-        "live_regression_prediction.py",
+        "/opt/airflow/src/prediction/live_regression_prediction.py",
         "Live regression prediction failed",
     )
 
 
 def evaluate_live_regression():
     run_script(
-        "evaluate_live_regression.py",
+        "/opt/airflow/src/prediction/evaluate_live_regression.py",
         "Live regression evaluation failed",
     )
 
 
 def run_live_weather_classifier():
     run_script(
-        "live_weather_classifier.py",
+        "/opt/airflow/src/prediction/live_weather_classifier.py",
         "Live general weather classification failed",
     )
 
@@ -53,14 +68,24 @@ with DAG(
     dag_id="weather_live_prediction",
     default_args=default_args,
     description=(
-        "Live Bengaluru weather regression, evaluation "
-        "and general weather classification"
+        "Live weather collection, rolling average, regression, "
+        "evaluation and classification"
     ),
     start_date=datetime(2026, 9, 23),
-    schedule="*/15 * * * *",
+    schedule="*/5 * * * *",
     catchup=False,
     tags=["weather", "ml", "regression", "classification"],
 ) as dag:
+
+    collect_weather = PythonOperator(
+        task_id="collect_live_weather",
+        python_callable=collect_live_weather,
+    )
+
+    rolling_average = PythonOperator(
+        task_id="calculate_30min_rolling_average",
+        python_callable=calculate_rolling_average,
+    )
 
     live_regression = PythonOperator(
         task_id="run_live_weather_prediction",
@@ -77,5 +102,7 @@ with DAG(
         python_callable=run_live_weather_classifier,
     )
 
+    collect_weather >> rolling_average
+    rolling_average >> live_regression
     live_regression >> regression_evaluation
     regression_evaluation >> general_weather

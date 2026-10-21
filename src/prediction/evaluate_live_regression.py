@@ -1,5 +1,4 @@
 from pathlib import Path
-from datetime import datetime, timedelta
 import os
 
 import matplotlib
@@ -63,8 +62,8 @@ def get_db_connection():
 
 
 def create_table():
-    """Create the live regression evaluation table if it does not exist."""
-    query = """
+    """Create the table and safely add the source column to existing databases."""
+    create_query = """
         CREATE TABLE IF NOT EXISTS live_regression_evaluations (
             id BIGSERIAL PRIMARY KEY,
             prediction_for TIMESTAMP NOT NULL,
@@ -72,6 +71,7 @@ def create_table():
             method TEXT NOT NULL,
             predicted_value DOUBLE PRECISION NOT NULL,
             actual_value DOUBLE PRECISION NOT NULL,
+            data_source TEXT NOT NULL DEFAULT 'legacy_unknown',
             error DOUBLE PRECISION NOT NULL,
             absolute_error DOUBLE PRECISION NOT NULL,
             evaluated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -79,36 +79,89 @@ def create_table():
         );
     """
 
+    migrate_query = """
+        ALTER TABLE live_regression_evaluations
+        ADD COLUMN IF NOT EXISTS data_source TEXT NOT NULL
+        DEFAULT 'legacy_unknown';
+    """
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(query)
+            cur.execute(create_query)
+            cur.execute(migrate_query)
 
 
 def fetch_actuals(date_string):
-    """Fetch hourly observed weather values from Open-Meteo Archive."""
-    url = "https://archive-api.open-meteo.com/v1/archive"
-
-    params = {
+    """Fetch hourly weather and label the source of the data."""
+    common_params = {
         "latitude": 12.9716,
         "longitude": 77.5946,
-        "start_date": date_string,
-        "end_date": date_string,
         "hourly": ",".join(TARGETS),
         "timezone": "Asia/Kolkata",
     }
 
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
+    sources = [
+        (
+            "https://archive-api.open-meteo.com/v1/archive",
+            "archive",
+            {
+                **common_params,
+                "start_date": date_string,
+                "end_date": date_string,
+            },
+        ),
+        (
+            "https://api.open-meteo.com/v1/forecast",
+            "forecast_model",
+            {
+                **common_params,
+                "past_days": 1,
+                "forecast_days": 1,
+            },
+        ),
+    ]
 
-    payload = response.json()
-    hourly = payload.get("hourly", {})
+    for url, source, params in sources:
+        try:
+            response = requests.get(url, params=params, timeout=30)
 
-    if not hourly or not hourly.get("time"):
-        return pd.DataFrame()
+            if not response.ok:
+                print(
+                    f"{source} API returned HTTP {response.status_code} "
+                    f"for {date_string}."
+                )
+                continue
 
-    actuals = pd.DataFrame(hourly)
-    actuals["time"] = pd.to_datetime(actuals["time"])
-    return actuals
+            hourly = response.json().get("hourly", {})
+
+            if not hourly or not hourly.get("time"):
+                continue
+
+            weather_frame = pd.DataFrame(hourly)
+            weather_frame["time"] = pd.to_datetime(
+                weather_frame["time"], errors="coerce"
+            )
+            weather_frame["data_source"] = source
+
+            weather_frame = weather_frame[
+                weather_frame["time"].dt.strftime("%Y-%m-%d")
+                == date_string
+            ].copy()
+
+            if not weather_frame.empty:
+                print(
+                    f"Weather data for {date_string} retrieved from: "
+                    f"{source}"
+                )
+                return weather_frame
+
+        except requests.RequestException as exc:
+            print(f"Could not fetch {date_string} from {source}: {exc}")
+        except (ValueError, KeyError) as exc:
+            print(f"Invalid weather response from {source}: {exc}")
+
+    print(f"No weather data available for {date_string}.")
+    return pd.DataFrame()
 
 
 def load_predictions():
@@ -122,23 +175,36 @@ def load_predictions():
     if predictions.empty:
         return predictions
 
-    required = {"prediction_for", "target", "method", "predicted_value"}
+    required = {
+        "prediction_for",
+        "target",
+        "method",
+        "predicted_value",
+    }
+
     missing = required.difference(predictions.columns)
 
     if missing:
         raise ValueError(
-            f"Prediction CSV is missing required columns: {sorted(missing)}"
+            f"Prediction CSV is missing required columns: "
+            f"{sorted(missing)}"
         )
 
     predictions["prediction_for"] = pd.to_datetime(
         predictions["prediction_for"], errors="coerce"
     )
+
     predictions["predicted_value"] = pd.to_numeric(
         predictions["predicted_value"], errors="coerce"
     )
 
     predictions = predictions.dropna(
-        subset=["prediction_for", "target", "method", "predicted_value"]
+        subset=[
+            "prediction_for",
+            "target",
+            "method",
+            "predicted_value",
+        ]
     )
 
     predictions = predictions[
@@ -153,7 +219,7 @@ def load_predictions():
 
 
 def load_existing_evaluations():
-    """Load previous evaluation rows so historical metrics are retained."""
+    """Load existing evaluations without discarding saved results."""
     if not EVALUATIONS_FILE.exists():
         return pd.DataFrame()
 
@@ -181,7 +247,12 @@ def load_existing_evaluations():
     )
 
     for column in ["predicted_value", "actual_value"]:
-        existing[column] = pd.to_numeric(existing[column], errors="coerce")
+        existing[column] = pd.to_numeric(
+            existing[column], errors="coerce"
+        )
+
+    if "data_source" not in existing.columns:
+        existing["data_source"] = "legacy_unknown"
 
     existing = existing.dropna(
         subset=[
@@ -197,7 +268,7 @@ def load_existing_evaluations():
 
 
 def save_evaluations_to_database(evaluations):
-    """Insert evaluation rows without duplicating existing observations."""
+    """Save evaluation rows to PostgreSQL."""
     if evaluations.empty:
         return
 
@@ -206,6 +277,7 @@ def save_evaluations_to_database(evaluations):
     for _, row in evaluations.iterrows():
         predicted = float(row["predicted_value"])
         actual = float(row["actual_value"])
+        data_source = str(row.get("data_source", "legacy_unknown"))
 
         rows.append(
             (
@@ -214,6 +286,7 @@ def save_evaluations_to_database(evaluations):
                 row["method"],
                 predicted,
                 actual,
+                data_source,
                 predicted - actual,
                 abs(predicted - actual),
             )
@@ -226,6 +299,7 @@ def save_evaluations_to_database(evaluations):
             method,
             predicted_value,
             actual_value,
+            data_source,
             error,
             absolute_error
         )
@@ -234,6 +308,7 @@ def save_evaluations_to_database(evaluations):
         DO UPDATE SET
             predicted_value = EXCLUDED.predicted_value,
             actual_value = EXCLUDED.actual_value,
+            data_source = EXCLUDED.data_source,
             error = EXCLUDED.error,
             absolute_error = EXCLUDED.absolute_error,
             evaluated_at = CURRENT_TIMESTAMP;
@@ -243,12 +318,15 @@ def save_evaluations_to_database(evaluations):
         with conn.cursor() as cur:
             execute_values(cur, query, rows)
 
-    print(f"PostgreSQL: upserted {len(rows)} regression evaluation rows.")
+    print(
+        f"PostgreSQL: upserted {len(rows)} regression evaluation rows."
+    )
 
 
 def evaluate_pending_predictions(predictions, existing):
-    """Evaluate past predictions that do not already have actual values."""
+    """Evaluate past predictions when matching weather values are available."""
     if predictions.empty:
+        print("No live regression predictions found.")
         return pd.DataFrame(), 0
 
     existing_keys = set()
@@ -263,6 +341,7 @@ def evaluate_pending_predictions(predictions, existing):
         )
 
     now = pd.Timestamp.now()
+
     pending = predictions[
         predictions["prediction_for"] < now
     ].copy()
@@ -284,7 +363,6 @@ def evaluate_pending_predictions(predictions, existing):
     if pending.empty:
         return pd.DataFrame(), 0
 
-    pending["actual_value"] = float("nan")
     dates = sorted(
         pending["prediction_for"].dt.strftime("%Y-%m-%d").unique()
     )
@@ -292,14 +370,10 @@ def evaluate_pending_predictions(predictions, existing):
     actual_frames = {}
 
     for date_string in dates:
-        try:
-            actuals = fetch_actuals(date_string)
-            if not actuals.empty:
-                actual_frames[date_string] = actuals
-        except requests.RequestException as exc:
-            print(f"Could not fetch actuals for {date_string}: {exc}")
-        except (ValueError, KeyError) as exc:
-            print(f"Invalid actual weather data for {date_string}: {exc}")
+        actuals = fetch_actuals(date_string)
+
+        if not actuals.empty:
+            actual_frames[date_string] = actuals
 
     evaluated_rows = []
 
@@ -311,6 +385,7 @@ def evaluate_pending_predictions(predictions, existing):
             continue
 
         target = row["target"]
+
         if target not in actuals.columns:
             continue
 
@@ -333,6 +408,9 @@ def evaluate_pending_predictions(predictions, existing):
                 "method": row["method"],
                 "predicted_value": float(row["predicted_value"]),
                 "actual_value": float(actual_value),
+                "data_source": matches.iloc[0].get(
+                    "data_source", "archive"
+                ),
             }
         )
 
@@ -348,74 +426,111 @@ def evaluate_pending_predictions(predictions, existing):
 
 
 def calculate_metrics(evaluations):
-    """Calculate MAE, RMSE and R² for each target and model."""
-    results = []
-
+    """Calculate MAE, RMSE and R2 by target, model, and data source."""
     if evaluations.empty:
+        print("No evaluations available for metrics.")
         return pd.DataFrame()
 
-    for (target, method), group in evaluations.groupby(["target", "method"]):
+    working = evaluations.copy()
+
+    if "data_source" not in working.columns:
+        working["data_source"] = "legacy_unknown"
+
+    working["data_source"] = working["data_source"].fillna(
+        "legacy_unknown"
+    )
+
+    records = []
+
+    for (target, method, source), group in working.groupby(
+        ["target", "method", "data_source"]
+    ):
         actual = group["actual_value"].astype(float)
         predicted = group["predicted_value"].astype(float)
 
-        mae = mean_absolute_error(actual, predicted)
-        rmse = mean_squared_error(actual, predicted) ** 0.5
+        record = {
+            "target": target,
+            "method": method,
+            "data_source": source,
+            "sample_count": len(group),
+            "MAE": mean_absolute_error(actual, predicted),
+            "RMSE": mean_squared_error(actual, predicted) ** 0.5,
+            "R2": (
+                r2_score(actual, predicted)
+                if len(group) >= 2
+                else float("nan")
+            ),
+        }
 
-        # R² is not meaningful for a single observation.
-        r2 = r2_score(actual, predicted) if len(group) >= 2 else float("nan")
+        records.append(record)
 
-        results.append(
-            {
-                "target": target,
-                "method": method,
-                "MAE": mae,
-                "RMSE": rmse,
-                "R2": r2,
-                "evaluated_rows": len(group),
-                "unit": UNITS.get(target, ""),
-            }
-        )
+    metrics = pd.DataFrame(records)
 
-    return pd.DataFrame(results)
+    METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    metrics.to_csv(METRICS_FILE, index=False)
+
+    print(f"Live metrics saved to: {METRICS_FILE}")
+
+    return metrics
 
 
-def generate_graphs(metrics_df):
-    """Create MAE, RMSE and R² comparison graphs."""
-    if metrics_df.empty:
-        print("No metrics available; graphs were not generated.")
+def select_best_models(metrics):
+    """Select the model with the lowest MAE for each target and source."""
+    if metrics.empty:
+        print("No metrics available to select best models.")
+        return pd.DataFrame()
+
+    best = (
+        metrics.sort_values("MAE")
+        .groupby(["target", "data_source"], as_index=False)
+        .first()
+    )
+
+    BEST_MODELS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    best.to_csv(BEST_MODELS_FILE, index=False)
+
+    print(f"Best-model results saved to: {BEST_MODELS_FILE}")
+
+    return best
+
+
+def generate_live_plots(metrics):
+    """Generate MAE comparison charts for live regression evaluation."""
+    if metrics.empty:
+        print("No metrics available for plotting.")
         return
 
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 
-    for metric in ["MAE", "RMSE", "R2"]:
-        pivot = metrics_df.pivot(
-            index="target",
-            columns="method",
-            values=metric,
-        )
+    for target in metrics["target"].unique():
+        target_data = metrics[metrics["target"] == target]
 
-        ax = pivot.plot(
-            kind="bar",
-            figsize=(15, 7),
-            title=f"Live Regression Model Comparison - {metric}",
-        )
+        for source in target_data["data_source"].unique():
+            plot_data = target_data[
+                target_data["data_source"] == source
+            ]
 
-        ax.set_xlabel("Weather variable")
-        ax.set_ylabel(metric)
-        ax.tick_params(axis="x", labelrotation=45)
-        ax.legend(title="Model")
-        ax.grid(axis="y", alpha=0.3)
+            if plot_data.empty:
+                continue
 
-        figure = ax.figure
-        figure.tight_layout()
-        output_file = FIGURE_DIR / f"live_{metric.lower()}_comparison.png"
-        figure.savefig(output_file, dpi=150, bbox_inches="tight")
-        plt.close(figure)
+            plt.figure(figsize=(8, 5))
+            plt.bar(plot_data["method"], plot_data["MAE"])
+            plt.title(f"Live MAE: {target} ({source})")
+            plt.xlabel("Model")
+            plt.ylabel(f"MAE ({UNITS.get(target, '')})")
+            plt.xticks(rotation=15)
+            plt.tight_layout()
 
-        print(f"Graph saved: {output_file}")
+            output_path = FIGURE_DIR / (
+                f"live_mae_{target}_{source}.png"
+            )
 
-    # Actual vs predicted scatter plots for each target.
-    # These show how closely predictions match observed values.
+            plt.savefig(output_path, dpi=150)
+            plt.close()
+
+            print(f"Graph saved: {output_path}")
+
+    # Actual-versus-predicted scatter plots for each weather variable.
     if EVALUATIONS_FILE.exists():
         try:
             evaluations = pd.read_csv(EVALUATIONS_FILE)
@@ -424,7 +539,9 @@ def generate_graphs(metrics_df):
 
         if not evaluations.empty:
             for target in evaluations["target"].dropna().unique():
-                target_data = evaluations[evaluations["target"] == target]
+                target_data = evaluations[
+                    evaluations["target"] == target
+                ]
 
                 if target_data.empty:
                     continue
@@ -442,10 +559,12 @@ def generate_graphs(metrics_df):
                 values = pd.concat(
                     [
                         pd.to_numeric(
-                            target_data["actual_value"], errors="coerce"
+                            target_data["actual_value"],
+                            errors="coerce",
                         ),
                         pd.to_numeric(
-                            target_data["predicted_value"], errors="coerce"
+                            target_data["predicted_value"],
+                            errors="coerce",
                         ),
                     ]
                 ).dropna()
@@ -453,6 +572,7 @@ def generate_graphs(metrics_df):
                 if not values.empty:
                     minimum = values.min()
                     maximum = values.max()
+
                     ax.plot(
                         [minimum, maximum],
                         [minimum, maximum],
@@ -461,14 +581,19 @@ def generate_graphs(metrics_df):
                     )
 
                 ax.set_title(f"Actual vs Predicted - {target}")
-                ax.set_xlabel(f"Actual value ({UNITS.get(target, '')})")
-                ax.set_ylabel(f"Predicted value ({UNITS.get(target, '')})")
+                ax.set_xlabel(
+                    f"Actual value ({UNITS.get(target, '')})"
+                )
+                ax.set_ylabel(
+                    f"Predicted value ({UNITS.get(target, '')})"
+                )
                 ax.legend()
                 ax.grid(alpha=0.3)
                 figure.tight_layout()
 
                 safe_target = "".join(
-                    character if character.isalnum() or character in "_-"
+                    character
+                    if character.isalnum() or character in "_-"
                     else "_"
                     for character in str(target)
                 )
@@ -478,6 +603,7 @@ def generate_graphs(metrics_df):
                     dpi=150,
                     bbox_inches="tight",
                 )
+
                 plt.close(figure)
 
 
@@ -505,7 +631,13 @@ def main():
     if not new_evaluations.empty:
         save_evaluations_to_database(new_evaluations)
 
-    # Merge previous and newly calculated evaluation rows.
+    if "data_source" not in existing.columns:
+        existing["data_source"] = "legacy_unknown"
+    else:
+        existing["data_source"] = existing["data_source"].fillna(
+            "legacy_unknown"
+        )
+
     combined = pd.concat(
         [existing, new_evaluations],
         ignore_index=True,
@@ -534,6 +666,7 @@ def main():
         combined["error"] = (
             combined["predicted_value"] - combined["actual_value"]
         )
+
         combined["absolute_error"] = combined["error"].abs()
 
     combined.to_csv(EVALUATIONS_FILE, index=False)
@@ -542,32 +675,25 @@ def main():
     print(f"Total evaluation records in CSV: {len(combined)}")
     print(f"Evaluations saved to: {EVALUATIONS_FILE}")
 
-    metrics_df = calculate_metrics(combined)
-    metrics_df.to_csv(METRICS_FILE, index=False)
+    metrics = calculate_metrics(combined)
 
-    if not metrics_df.empty:
+    if not metrics.empty:
         print("\nLIVE REGRESSION METRICS")
-        print(metrics_df.to_string(index=False))
+        print(metrics.to_string(index=False))
 
-        # Choose the model with the lowest MAE for each target.
-        best_models = (
-            metrics_df.sort_values("MAE")
-            .groupby("target", as_index=False)
-            .first()
-        )
+        best_models = select_best_models(metrics)
 
-        best_models.to_csv(BEST_MODELS_FILE, index=False)
+        if not best_models.empty:
+            print("\nBest live model by target (lowest MAE):")
+            print(
+                best_models[
+                    ["target", "method", "MAE"]
+                ].to_string(index=False)
+            )
+    else:
+        print("No saved evaluations are available yet.")
 
-        print("\nBest live model by weather variable (lowest MAE):")
-        print(
-            best_models[["target", "method", "MAE", "evaluated_rows"]]
-            .to_string(index=False)
-        )
-        print(f"Best-model summary saved to: {BEST_MODELS_FILE}")
-
-    print(f"Metrics saved to: {METRICS_FILE}")
-
-    generate_graphs(metrics_df)
+    generate_live_plots(metrics)
 
     print(f"\nGraph folder: {FIGURE_DIR}")
     print("LIVE REGRESSION EVALUATION COMPLETE")

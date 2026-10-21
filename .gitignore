@@ -40,3 +40,12 @@ Thumbs.db
 # Oversized model files - do not push directly to GitHub
 /models/random_forest_rain_model.pkl
 /models/weather_classifier/random_forest.joblib
+
+# Additional generated files
+*.bak
+*.tmp
+review_diff.txt
+
+# Live model artifacts
+/models/weather_classifier/*.joblib
+/models/weather_multiclass/*.joblib
